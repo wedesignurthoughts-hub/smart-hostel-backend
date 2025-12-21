@@ -2,6 +2,8 @@ require("dotenv").config({ path: "env.txt" });
 
 const express = require("express");
 const app = express();
+
+app.use(express.json());
 const jwt = require("jsonwebtoken");
 
 const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_THIS_SECRET";
@@ -27,7 +29,6 @@ function authMiddleware(req, res, next) {
 }
 
 
-app.use(express.json());
 
 const PORT = 4000;
 const TRIAL_DAYS = 7;
