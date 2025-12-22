@@ -10,23 +10,29 @@ const PORT = 4000;
 const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_THIS_SECRET";
 const JWT_EXPIRY = "30d";
 
-// In-memory stores (DEV ONLY)
-const otpStore = new Map();
-const users = new Map();
+/* ===============================
+   IN-MEMORY STORES (DEV ONLY)
+   =============================== */
+const otpStore = new Map();      // phone -> { otp, expiresAt }
+const users = new Map();         // phone -> { phone, subscriptionActive }
 
-/* ---------- HEALTH ---------- */
+/* ===============================
+   HEALTH CHECK
+   =============================== */
 app.get("/health", (req, res) => {
   res.json({ ok: true });
 });
 
-/* ---------- SEND OTP ---------- */
+/* ===============================
+   SEND OTP
+   =============================== */
 app.post("/api/v1/send-otp", (req, res) => {
   const phone = String(req.body.phone || "")
     .replace(/\D/g, "")
     .slice(-10);
 
   if (phone.length !== 10) {
-    return res.status(400).json({ message: "Invalid phone" });
+    return res.status(400).json({ message: "Invalid phone number" });
   }
 
   const otp = "123456"; // DEV OTP
@@ -40,16 +46,17 @@ app.post("/api/v1/send-otp", (req, res) => {
   return res.json({ success: true });
 });
 
-/* ---------- VERIFY OTP ---------- */
+/* ===============================
+   VERIFY OTP
+   =============================== */
 app.post("/api/v1/verify-otp", (req, res) => {
-  const phone = String(req.body.phone || "").replace(/\D/g, "").slice(-10);
+  const phone = String(req.body.phone || "")
+    .replace(/\D/g, "")
+    .slice(-10);
+
   const otp = String(req.body.otp || "");
 
-  console.log("VERIFY HIT");
-  console.log("REQ PHONE:", req.body.phone);
-  console.log("NORMALIZED PHONE:", phone);
-  console.log("OTP ENTERED:", otp);
-  console.log("OTP STORE KEYS:", Array.from(otpStore.keys()));
+  console.log("VERIFY HIT:", phone, otp);
 
   const record = otpStore.get(phone);
 
@@ -66,16 +73,36 @@ app.post("/api/v1/verify-otp", (req, res) => {
     return res.status(400).json({ message: "Invalid OTP" });
   }
 
-  // ✅ OTP VERIFIED
+  // OTP SUCCESS
   otpStore.delete(phone);
+
+  // Create or fetch user
+  let user = users.get(phone);
+  if (!user) {
+    user = {
+      phone,
+      subscriptionActive: false, // ❌ NO FREE TRIAL
+    };
+    users.set(phone, user);
+  }
+
+  // Create JWT
+  const token = jwt.sign(
+    { phone },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRY }
+  );
 
   return res.json({
     success: true,
-    subscriptionActive: false   // no free trial (as you want)
+    token,
+    subscriptionActive: user.subscriptionActive,
   });
 });
 
-/* ---------- JWT MIDDLEWARE ---------- */
+/* ===============================
+   JWT AUTH MIDDLEWARE
+   =============================== */
 function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
 
@@ -93,7 +120,9 @@ function authMiddleware(req, res, next) {
   }
 }
 
-/* ---------- DASHBOARD ---------- */
+/* ===============================
+   PROTECTED DASHBOARD
+   =============================== */
 app.get("/api/v1/dashboard", authMiddleware, (req, res) => {
   res.json({
     message: "Welcome to dashboard",
@@ -101,7 +130,9 @@ app.get("/api/v1/dashboard", authMiddleware, (req, res) => {
   });
 });
 
-/* ---------- START ---------- */
+/* ===============================
+   START SERVER
+   =============================== */
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
 });
