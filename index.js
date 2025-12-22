@@ -42,16 +42,14 @@ app.post("/api/v1/send-otp", (req, res) => {
 
 /* ---------- VERIFY OTP ---------- */
 app.post("/api/v1/verify-otp", (req, res) => {
-  const phone = String(req.body.phone || "")
-    .replace(/\D/g, "")
-    .slice(-10);
-
+  const phone = String(req.body.phone || "").replace(/\D/g, "").slice(-10);
   const otp = String(req.body.otp || "");
 
   console.log("VERIFY HIT");
-  console.log("PHONE:", phone);
-  console.log("OTP:", otp);
-  console.log("OTP STORE:", Array.from(otpStore.keys()));
+  console.log("REQ PHONE:", req.body.phone);
+  console.log("NORMALIZED PHONE:", phone);
+  console.log("OTP ENTERED:", otp);
+  console.log("OTP STORE KEYS:", Array.from(otpStore.keys()));
 
   const record = otpStore.get(phone);
 
@@ -71,26 +69,9 @@ app.post("/api/v1/verify-otp", (req, res) => {
   // ✅ OTP VERIFIED
   otpStore.delete(phone);
 
-  let user = users.get(phone);
-  if (!user) {
-    user = {
-      phone,
-      subscriptionActive: false, // ❌ no free trial
-    };
-    users.set(phone, user);
-  }
-
-  const token = jwt.sign(
-    { phone },
-    JWT_SECRET,
-    { expiresIn: JWT_EXPIRY }
-  );
-
-  // ✅ VERY IMPORTANT: SEND RESPONSE
   return res.json({
     success: true,
-    token,
-    subscriptionActive: user.subscriptionActive,
+    subscriptionActive: false   // no free trial (as you want)
   });
 });
 
