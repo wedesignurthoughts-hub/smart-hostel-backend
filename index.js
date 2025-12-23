@@ -2,37 +2,45 @@ require("dotenv").config({ path: "env.txt" });
 
 const express = require("express");
 const jwt = require("jsonwebtoken");
+const Razorpay = require("razorpay");
+const crypto = require("crypto");
 
 const app = express();
 app.use(express.json());
 
 const PORT = 4000;
-const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_THIS_SECRET";
+const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRY = "30d";
 
 /* ===============================
-   IN-MEMORY STORES (DEV ONLY)
-   =============================== */
-const otpStore = new Map();      // phone -> { otp, expiresAt }
-const users = new Map();         // phone -> { phone, subscriptionActive }
+   RAZORPAY INSTANCE
+================================ */
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
 
 /* ===============================
-   HEALTH CHECK
-   =============================== */
+   IN-MEMORY STORES (DEV ONLY)
+================================ */
+const otpStore = new Map();     // phone → { otp, expiresAt }
+const users = new Map();        // phone → { phone, subscriptionActive }
+
+/* ===============================
+   HEALTH
+================================ */
 app.get("/health", (req, res) => {
   res.json({ ok: true });
 });
 
 /* ===============================
    SEND OTP
-   =============================== */
+================================ */
 app.post("/api/v1/send-otp", (req, res) => {
-  const phone = String(req.body.phone || "")
-    .replace(/\D/g, "")
-    .slice(-10);
+  const phone = String(req.body.phone || "").replace(/\D/g, "").slice(-10);
 
   if (phone.length !== 10) {
-    return res.status(400).json({ message: "Invalid phone number" });
+    return res.status(400).json({ message: "Invalid phone" });
   }
 
   const otp = "123456"; // DEV OTP
@@ -42,58 +50,34 @@ app.post("/api/v1/send-otp", (req, res) => {
   });
 
   console.log("SEND OTP:", phone, otp);
-
-  return res.json({ success: true });
+  res.json({ success: true });
 });
 
 /* ===============================
    VERIFY OTP
-   =============================== */
+================================ */
 app.post("/api/v1/verify-otp", (req, res) => {
-  const phone = String(req.body.phone || "")
-    .replace(/\D/g, "")
-    .slice(-10);
-
+  const phone = String(req.body.phone || "").replace(/\D/g, "").slice(-10);
   const otp = String(req.body.otp || "");
 
-  console.log("VERIFY HIT:", phone, otp);
-
   const record = otpStore.get(phone);
-
-  if (!record) {
-    return res.status(400).json({ message: "OTP not found" });
-  }
-
-  if (Date.now() > record.expiresAt) {
-    otpStore.delete(phone);
+  if (!record) return res.status(400).json({ message: "OTP not found" });
+  if (Date.now() > record.expiresAt)
     return res.status(400).json({ message: "OTP expired" });
-  }
-
-  if (otp !== record.otp) {
+  if (otp !== record.otp)
     return res.status(400).json({ message: "Invalid OTP" });
-  }
 
-  // OTP SUCCESS
   otpStore.delete(phone);
 
-  // Create or fetch user
   let user = users.get(phone);
   if (!user) {
-    user = {
-      phone,
-      subscriptionActive: false, // ❌ NO FREE TRIAL
-    };
+    user = { phone, subscriptionActive: false };
     users.set(phone, user);
   }
 
-  // Create JWT
-  const token = jwt.sign(
-    { phone },
-    JWT_SECRET,
-    { expiresIn: JWT_EXPIRY }
-  );
+  const token = jwt.sign({ phone }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
 
-  return res.json({
+  res.json({
     success: true,
     token,
     subscriptionActive: user.subscriptionActive,
@@ -101,19 +85,74 @@ app.post("/api/v1/verify-otp", (req, res) => {
 });
 
 /* ===============================
-   JWT AUTH MIDDLEWARE
-   =============================== */
-function authMiddleware(req, res, next) {
-  const authHeader = req.headers.authorization;
+   CREATE RAZORPAY ORDER
+================================ */
+app.post("/api/v1/create-order", async (req, res) => {
+  try {
+    const amount = Number(req.body.amount);
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "Unauthorized" });
+    if (!amount || amount < 1) {
+      return res.status(400).json({ message: "Invalid amount" });
+    }
+
+    const order = await razorpay.orders.create({
+      amount: amount * 100, // ₹ → paise
+      currency: "INR",
+      receipt: "receipt_" + Date.now(),
+    });
+
+    console.log("ORDER CREATED:", order.id);
+    res.json(order);
+  } catch (err) {
+    console.error("CREATE ORDER ERROR:", err);
+    res.status(500).json({ message: "Order creation failed" });
+  }
+});
+
+/* ===============================
+   VERIFY PAYMENT
+================================ */
+app.post("/api/v1/verify-payment", (req, res) => {
+  const {
+    razorpay_order_id,
+    razorpay_payment_id,
+    razorpay_signature,
+    phone,
+  } = req.body;
+
+  const body = razorpay_order_id + "|" + razorpay_payment_id;
+
+  const expectedSignature = crypto
+    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+    .update(body)
+    .digest("hex");
+
+  if (expectedSignature !== razorpay_signature) {
+    return res.status(400).json({ message: "Invalid payment signature" });
   }
 
+  // ✅ PAYMENT VERIFIED → ACTIVATE SUBSCRIPTION
+  let user = users.get(phone);
+  if (!user) user = { phone };
+
+  user.subscriptionActive = true;
+  users.set(phone, user);
+
+  console.log("PAYMENT VERIFIED FOR:", phone);
+  res.json({ success: true });
+});
+
+/* ===============================
+   JWT AUTH
+================================ */
+function authMiddleware(req, res, next) {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith("Bearer "))
+    return res.status(401).json({ message: "Unauthorized" });
+
   try {
-    const token = authHeader.split(" ")[1];
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    const token = auth.split(" ")[1];
+    req.user = jwt.verify(token, JWT_SECRET);
     next();
   } catch {
     return res.status(401).json({ message: "Invalid token" });
@@ -121,8 +160,8 @@ function authMiddleware(req, res, next) {
 }
 
 /* ===============================
-   PROTECTED DASHBOARD
-   =============================== */
+   DASHBOARD
+================================ */
 app.get("/api/v1/dashboard", authMiddleware, (req, res) => {
   res.json({
     message: "Welcome to dashboard",
@@ -131,8 +170,8 @@ app.get("/api/v1/dashboard", authMiddleware, (req, res) => {
 });
 
 /* ===============================
-   START SERVER
-   =============================== */
+   START
+================================ */
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
 });
