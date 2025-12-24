@@ -76,21 +76,33 @@ app.post("/api/v1/verify-otp", (req, res) => {
   if (otp !== record.otp)
     return res.status(400).json({ message: "Invalid OTP" });
 
-  otpStore.delete(phone);
+  // OTP SUCCESS
+otpStore.delete(phone);
 
-  let user = users.get(phone);
-  if (!user) {
-    user = { phone, subscriptionActive: false };
-    users.set(phone, user);
-  }
+// 🔹 Check if user exists
+const result = await pool.query(
+  "SELECT * FROM users WHERE phone = $1",
+  [phone]
+);
 
-  const token = jwt.sign({ phone }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+let user;
 
-  res.json({
-    success: true,
-    token,
-    subscriptionActive: user.subscriptionActive,
-  });
+if (result.rows.length === 0) {
+  // 🔹 Create new user (no free trial)
+  const insert = await pool.query(
+    "INSERT INTO users (phone, subscription_active) VALUES ($1, false) RETURNING *",
+    [phone]
+  );
+  user = insert.rows[0];
+} else {
+  user = result.rows[0];
+}
+
+return res.json({
+  success: true,
+  subscriptionActive: user.subscription_active,
+});
+
 });
 
 /* ===============================
