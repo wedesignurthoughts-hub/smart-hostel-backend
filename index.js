@@ -1,5 +1,14 @@
+
 require("dotenv").config({ path: "env.txt" });
 
+const { Pool } = require("pg");
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
+});
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const Razorpay = require("razorpay");
@@ -24,7 +33,7 @@ const razorpay = new Razorpay({
    IN-MEMORY STORES (DEV ONLY)
 ================================ */
 const otpStore = new Map();     // phone → { otp, expiresAt }
-const users = new Map();        // phone → { phone, subscriptionActive }
+
 
 /* ===============================
    HEALTH
