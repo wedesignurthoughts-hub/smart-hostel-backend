@@ -65,7 +65,8 @@ app.post("/api/v1/send-otp", (req, res) => {
 /* ===============================
    VERIFY OTP
 ================================ */
-app.post("/api/v1/verify-otp", (req, res) => {
+app.post("/api/v1/verify-otp", async (req, res) => {
+
   const phone = String(req.body.phone || "").replace(/\D/g, "").slice(-10);
   const otp = String(req.body.otp || "");
 
