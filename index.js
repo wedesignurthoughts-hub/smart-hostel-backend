@@ -66,6 +66,7 @@ app.post("/api/v1/send-otp", (req, res) => {
    VERIFY OTP
 ================================ */
 app.post("/api/v1/verify-otp", async (req, res) => {
+console.log("🚨 VERIFY OTP ROUTE – NEW CODE RUNNING 🚨");
   try {
     const phone = String(req.body.phone || "")
       .replace(/\D/g, "")
