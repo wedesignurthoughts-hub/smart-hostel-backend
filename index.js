@@ -1,18 +1,8 @@
-
 require("dotenv").config({ path: "env.txt" });
 
-const { Pool } = require("pg");
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
-  }
-});
 const express = require("express");
 const jwt = require("jsonwebtoken");
-const Razorpay = require("razorpay");
-const crypto = require("crypto");
+const { Pool } = require("pg");
 
 const app = express();
 app.use(express.json());
@@ -21,42 +11,50 @@ const PORT = 4000;
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRY = "30d";
 
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET is missing");
+}
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL is missing");
+}
+
 /* ===============================
-   RAZORPAY INSTANCE
-================================ */
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
+   POSTGRES CONNECTION
+   =============================== */
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
 });
-
-/* ===============================
-   IN-MEMORY STORES (DEV ONLY)
-================================ */
-const otpStore = new Map();     // phone → { otp, expiresAt }
-
 
 /* ===============================
    HEALTH
-================================ */
-app.get("/health", (req, res) => {
-  res.json({ ok: true });
+   =============================== */
+app.get("/health", async (req, res) => {
+  const r = await pool.query("SELECT 1");
+  res.json({ ok: true, db: true });
 });
 
 /* ===============================
-   SEND OTP
-================================ */
-app.post("/api/v1/send-otp", (req, res) => {
+   SEND OTP (STORE IN DB)
+   =============================== */
+app.post("/api/v1/send-otp", async (req, res) => {
   const phone = String(req.body.phone || "").replace(/\D/g, "").slice(-10);
-
   if (phone.length !== 10) {
     return res.status(400).json({ message: "Invalid phone" });
   }
 
   const otp = "123456"; // DEV OTP
-  otpStore.set(phone, {
-    otp,
-    expiresAt: Date.now() + 5 * 60 * 1000,
-  });
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+  await pool.query(
+    `
+    INSERT INTO otp (phone, otp, expires_at)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (phone)
+    DO UPDATE SET otp = $2, expires_at = $3
+    `,
+    [phone, otp, expiresAt]
+  );
 
   console.log("SEND OTP:", phone, otp);
   res.json({ success: true });
@@ -64,155 +62,89 @@ app.post("/api/v1/send-otp", (req, res) => {
 
 /* ===============================
    VERIFY OTP
-================================ */
+   =============================== */
 app.post("/api/v1/verify-otp", async (req, res) => {
-console.log("🚨 VERIFY OTP ROUTE – NEW CODE RUNNING 🚨");
-  try {
-    const phone = String(req.body.phone || "")
-      .replace(/\D/g, "")
-      .slice(-10);
+  const phone = String(req.body.phone || "").replace(/\D/g, "").slice(-10);
+  const otp = String(req.body.otp || "");
 
-    const otp = String(req.body.otp || "");
+  const result = await pool.query(
+    "SELECT otp, expires_at FROM otp WHERE phone = $1",
+    [phone]
+  );
 
-    console.log("VERIFY OTP:", phone, otp);
+  if (result.rows.length === 0) {
+    return res.status(400).json({ message: "OTP not found" });
+  }
 
-    const record = otpStore.get(phone);
+  const record = result.rows[0];
 
-    if (!record) {
-      return res.status(400).json({ message: "OTP not found" });
-    }
+  if (new Date() > record.expires_at) {
+    return res.status(400).json({ message: "OTP expired" });
+  }
 
-    if (Date.now() > record.expiresAt) {
-      otpStore.delete(phone);
-      return res.status(400).json({ message: "OTP expired" });
-    }
+  if (record.otp !== otp) {
+    return res.status(400).json({ message: "Invalid OTP" });
+  }
 
-    if (otp !== record.otp) {
-      return res.status(400).json({ message: "Invalid OTP" });
-    }
+  // OTP verified → delete OTP
+  await pool.query("DELETE FROM otp WHERE phone = $1", [phone]);
 
-    // OTP valid
-    otpStore.delete(phone);
+  // Create user if not exists
+  const userResult = await pool.query(
+    `
+    INSERT INTO users (phone, subscription_active)
+    VALUES ($1, false)
+    ON CONFLICT (phone) DO NOTHING
+    RETURNING *
+    `,
+    [phone]
+  );
 
-    // 🔹 CHECK USER IN DATABASE
-    const result = await pool.query(
-      "SELECT * FROM users WHERE phone = $1",
-      [phone]
-    );
-
-    let user;
-
-    if (result.rows.length === 0) {
-      console.log("Creating new user in DB:", phone);
-      const insert = await pool.query(
-        "INSERT INTO users (phone, subscription_active) VALUES ($1, false) RETURNING *",
+  const user =
+    userResult.rows[0] ||
+    (
+      await pool.query(
+        "SELECT * FROM users WHERE phone = $1",
         [phone]
-      );
-      user = insert.rows[0];
-    } else {
-      user = result.rows[0];
-    }
+      )
+    ).rows[0];
 
-    return res.json({
-      success: true,
-      subscriptionActive: user.subscription_active,
-    });
+  const token = jwt.sign({ phone }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
 
-  } catch (err) {
-    console.error("VERIFY OTP ERROR:", err);
-    return res.status(500).json({ message: "Server error" });
-  }
-});
-
-
-/* ===============================
-   CREATE RAZORPAY ORDER
-================================ */
-app.post("/api/v1/create-order", async (req, res) => {
-  try {
-    const amount = Number(req.body.amount);
-
-    if (!amount || amount < 1) {
-      return res.status(400).json({ message: "Invalid amount" });
-    }
-
-    const order = await razorpay.orders.create({
-      amount: amount * 100, // ₹ → paise
-      currency: "INR",
-      receipt: "receipt_" + Date.now(),
-    });
-
-    console.log("ORDER CREATED:", order.id);
-    res.json(order);
-  } catch (err) {
-    console.error("CREATE ORDER ERROR:", err);
-    res.status(500).json({ message: "Order creation failed" });
-  }
+  res.json({
+    success: true,
+    token,
+    subscriptionActive: user.subscription_active,
+  });
 });
 
 /* ===============================
-   VERIFY PAYMENT
-================================ */
-app.post("/api/v1/verify-payment", (req, res) => {
-  const {
-    razorpay_order_id,
-    razorpay_payment_id,
-    razorpay_signature,
-    phone,
-  } = req.body;
-
-  const body = razorpay_order_id + "|" + razorpay_payment_id;
-
-  const expectedSignature = crypto
-    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
-    .update(body)
-    .digest("hex");
-
-  if (expectedSignature !== razorpay_signature) {
-    return res.status(400).json({ message: "Invalid payment signature" });
-  }
-
-  // ✅ PAYMENT VERIFIED → ACTIVATE SUBSCRIPTION
-  let user = users.get(phone);
-  if (!user) user = { phone };
-
-  user.subscriptionActive = true;
-  users.set(phone, user);
-
-  console.log("PAYMENT VERIFIED FOR:", phone);
-  res.json({ success: true });
-});
-
-/* ===============================
-   JWT AUTH
-================================ */
+   JWT MIDDLEWARE
+   =============================== */
 function authMiddleware(req, res, next) {
   const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith("Bearer "))
+  if (!auth?.startsWith("Bearer ")) {
     return res.status(401).json({ message: "Unauthorized" });
+  }
 
   try {
-    const token = auth.split(" ")[1];
-    req.user = jwt.verify(token, JWT_SECRET);
+    req.user = jwt.verify(auth.split(" ")[1], JWT_SECRET);
     next();
   } catch {
-    return res.status(401).json({ message: "Invalid token" });
+    res.status(401).json({ message: "Invalid token" });
   }
 }
 
 /* ===============================
    DASHBOARD
-================================ */
+   =============================== */
 app.get("/api/v1/dashboard", authMiddleware, (req, res) => {
-  res.json({
-    message: "Welcome to dashboard",
-    phone: req.user.phone,
-  });
+  res.json({ message: "Welcome", phone: req.user.phone });
 });
 
 /* ===============================
    START
-================================ */
+   =============================== */
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log("Server running on port", PORT);
 });
