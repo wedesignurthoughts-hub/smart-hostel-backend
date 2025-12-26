@@ -66,45 +66,63 @@ app.post("/api/v1/send-otp", (req, res) => {
    VERIFY OTP
 ================================ */
 app.post("/api/v1/verify-otp", async (req, res) => {
+  try {
+    const phone = String(req.body.phone || "")
+      .replace(/\D/g, "")
+      .slice(-10);
 
-  const phone = String(req.body.phone || "").replace(/\D/g, "").slice(-10);
-  const otp = String(req.body.otp || "");
+    const otp = String(req.body.otp || "");
 
-  const record = otpStore.get(phone);
-  if (!record) return res.status(400).json({ message: "OTP not found" });
-  if (Date.now() > record.expiresAt)
-    return res.status(400).json({ message: "OTP expired" });
-  if (otp !== record.otp)
-    return res.status(400).json({ message: "Invalid OTP" });
+    console.log("VERIFY OTP:", phone, otp);
 
-  // OTP SUCCESS
-otpStore.delete(phone);
+    const record = otpStore.get(phone);
 
-// 🔹 Check if user exists
-const result = await pool.query(
-  "SELECT * FROM users WHERE phone = $1",
-  [phone]
-);
+    if (!record) {
+      return res.status(400).json({ message: "OTP not found" });
+    }
 
-let user;
+    if (Date.now() > record.expiresAt) {
+      otpStore.delete(phone);
+      return res.status(400).json({ message: "OTP expired" });
+    }
 
-if (result.rows.length === 0) {
-  // 🔹 Create new user (no free trial)
-  const insert = await pool.query(
-    "INSERT INTO users (phone, subscription_active) VALUES ($1, false) RETURNING *",
-    [phone]
-  );
-  user = insert.rows[0];
-} else {
-  user = result.rows[0];
-}
+    if (otp !== record.otp) {
+      return res.status(400).json({ message: "Invalid OTP" });
+    }
 
-return res.json({
-  success: true,
-  subscriptionActive: user.subscription_active,
+    // OTP valid
+    otpStore.delete(phone);
+
+    // 🔹 CHECK USER IN DATABASE
+    const result = await pool.query(
+      "SELECT * FROM users WHERE phone = $1",
+      [phone]
+    );
+
+    let user;
+
+    if (result.rows.length === 0) {
+      console.log("Creating new user in DB:", phone);
+      const insert = await pool.query(
+        "INSERT INTO users (phone, subscription_active) VALUES ($1, false) RETURNING *",
+        [phone]
+      );
+      user = insert.rows[0];
+    } else {
+      user = result.rows[0];
+    }
+
+    return res.json({
+      success: true,
+      subscriptionActive: user.subscription_active,
+    });
+
+  } catch (err) {
+    console.error("VERIFY OTP ERROR:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
 });
 
-});
 
 /* ===============================
    CREATE RAZORPAY ORDER
