@@ -1,4 +1,4 @@
-require("dotenv").config({ path: "env.txt" });
+require("dotenv").config();
 
 const express = require("express");
 const jwt = require("jsonwebtoken");
@@ -7,10 +7,13 @@ const { Pool } = require("pg");
 const app = express();
 app.use(express.json());
 
-const PORT = 4000;
+const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRY = "30d";
 
+/* ===============================
+   REQUIRED ENV CHECKS
+   =============================== */
 if (!JWT_SECRET) {
   throw new Error("JWT_SECRET is missing");
 }
@@ -27,20 +30,23 @@ const pool = new Pool({
 });
 
 /* ===============================
-   HEALTH
+   HEALTH CHECK
    =============================== */
 app.get("/health", async (req, res) => {
-  const r = await pool.query("SELECT 1");
+  await pool.query("SELECT 1");
   res.json({ ok: true, db: true });
 });
 
 /* ===============================
-   SEND OTP (STORE IN DB)
+   SEND OTP
    =============================== */
 app.post("/api/v1/send-otp", async (req, res) => {
-  const phone = String(req.body.phone || "").replace(/\D/g, "").slice(-10);
+  const phone = String(req.body.phone || "")
+    .replace(/\D/g, "")
+    .slice(-10);
+
   if (phone.length !== 10) {
-    return res.status(400).json({ message: "Invalid phone" });
+    return res.status(400).json({ message: "Invalid phone number" });
   }
 
   const otp = "123456"; // DEV OTP
@@ -64,7 +70,10 @@ app.post("/api/v1/send-otp", async (req, res) => {
    VERIFY OTP
    =============================== */
 app.post("/api/v1/verify-otp", async (req, res) => {
-  const phone = String(req.body.phone || "").replace(/\D/g, "").slice(-10);
+  const phone = String(req.body.phone || "")
+    .replace(/\D/g, "")
+    .slice(-10);
+
   const otp = String(req.body.otp || "");
 
   const result = await pool.query(
@@ -90,7 +99,7 @@ app.post("/api/v1/verify-otp", async (req, res) => {
   await pool.query("DELETE FROM otp WHERE phone = $1", [phone]);
 
   // Create user if not exists
-  const userResult = await pool.query(
+  const userInsert = await pool.query(
     `
     INSERT INTO users (phone, subscription_active)
     VALUES ($1, false)
@@ -101,7 +110,7 @@ app.post("/api/v1/verify-otp", async (req, res) => {
   );
 
   const user =
-    userResult.rows[0] ||
+    userInsert.rows[0] ||
     (
       await pool.query(
         "SELECT * FROM users WHERE phone = $1",
@@ -109,7 +118,9 @@ app.post("/api/v1/verify-otp", async (req, res) => {
       )
     ).rows[0];
 
-  const token = jwt.sign({ phone }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+  const token = jwt.sign({ phone }, JWT_SECRET, {
+    expiresIn: JWT_EXPIRY,
+  });
 
   res.json({
     success: true,
@@ -123,7 +134,8 @@ app.post("/api/v1/verify-otp", async (req, res) => {
    =============================== */
 function authMiddleware(req, res, next) {
   const auth = req.headers.authorization;
-  if (!auth?.startsWith("Bearer ")) {
+
+  if (!auth || !auth.startsWith("Bearer ")) {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
@@ -131,7 +143,7 @@ function authMiddleware(req, res, next) {
     req.user = jwt.verify(auth.split(" ")[1], JWT_SECRET);
     next();
   } catch {
-    res.status(401).json({ message: "Invalid token" });
+    return res.status(401).json({ message: "Invalid token" });
   }
 }
 
@@ -139,11 +151,14 @@ function authMiddleware(req, res, next) {
    DASHBOARD
    =============================== */
 app.get("/api/v1/dashboard", authMiddleware, (req, res) => {
-  res.json({ message: "Welcome", phone: req.user.phone });
+  res.json({
+    message: "Welcome to dashboard",
+    phone: req.user.phone,
+  });
 });
 
 /* ===============================
-   START
+   START SERVER
    =============================== */
 app.listen(PORT, "0.0.0.0", () => {
   console.log("Server running on port", PORT);
