@@ -1,132 +1,126 @@
-require("dotenv").config();
+require("dotenv").config({ path: "env.txt" });
 
 const express = require("express");
 const jwt = require("jsonwebtoken");
-const { Pool } = require("pg");
+const sqlite3 = require("sqlite3").verbose();
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 4000;
-const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_THIS_SECRET";
 const JWT_EXPIRY = "30d";
 
 /* ===============================
-   REQUIRED ENV CHECKS
+   SQLITE DATABASE
    =============================== */
-if (!JWT_SECRET) {
-  throw new Error("JWT_SECRET is missing");
-}
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL is missing");
-}
+const db = new sqlite3.Database("./data.db");
 
-/* ===============================
-   POSTGRES CONNECTION
-   =============================== */
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+// Create tables
+db.serialize(() => {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS users (
+      phone TEXT PRIMARY KEY,
+      subscription_active INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS otp (
+      phone TEXT PRIMARY KEY,
+      otp TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    )
+  `);
 });
 
 /* ===============================
-   HEALTH CHECK
+   HEALTH
    =============================== */
-app.get("/health", async (req, res) => {
-  await pool.query("SELECT 1");
-  res.json({ ok: true, db: true });
+app.get("/health", (req, res) => {
+  res.json({ ok: true });
 });
 
 /* ===============================
    SEND OTP
    =============================== */
-app.post("/api/v1/send-otp", async (req, res) => {
-  const phone = String(req.body.phone || "")
-    .replace(/\D/g, "")
-    .slice(-10);
+app.post("/api/v1/send-otp", (req, res) => {
+  const phone = String(req.body.phone || "").replace(/\D/g, "").slice(-10);
 
   if (phone.length !== 10) {
-    return res.status(400).json({ message: "Invalid phone number" });
+    return res.status(400).json({ message: "Invalid phone" });
   }
 
   const otp = "123456"; // DEV OTP
-  const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+  const expiresAt = Date.now() + 5 * 60 * 1000;
 
-  await pool.query(
+  db.run(
     `
     INSERT INTO otp (phone, otp, expires_at)
-    VALUES ($1, $2, $3)
-    ON CONFLICT (phone)
-    DO UPDATE SET otp = $2, expires_at = $3
+    VALUES (?, ?, ?)
+    ON CONFLICT(phone)
+    DO UPDATE SET otp = ?, expires_at = ?
     `,
-    [phone, otp, expiresAt]
-  );
+    [phone, otp, expiresAt, otp, expiresAt],
+    (err) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ message: "DB error" });
+      }
 
-  console.log("SEND OTP:", phone, otp);
-  res.json({ success: true });
+      console.log("SEND OTP:", phone, otp);
+      res.json({ success: true });
+    }
+  );
 });
 
 /* ===============================
    VERIFY OTP
    =============================== */
-app.post("/api/v1/verify-otp", async (req, res) => {
-  const phone = String(req.body.phone || "")
-    .replace(/\D/g, "")
-    .slice(-10);
-
+app.post("/api/v1/verify-otp", (req, res) => {
+  const phone = String(req.body.phone || "").replace(/\D/g, "").slice(-10);
   const otp = String(req.body.otp || "");
 
-  const result = await pool.query(
-    "SELECT otp, expires_at FROM otp WHERE phone = $1",
-    [phone]
-  );
+  db.get(
+    "SELECT * FROM otp WHERE phone = ?",
+    [phone],
+    (err, record) => {
+      if (err || !record) {
+        return res.status(400).json({ message: "OTP not found" });
+      }
 
-  if (result.rows.length === 0) {
-    return res.status(400).json({ message: "OTP not found" });
-  }
+      if (Date.now() > record.expires_at) {
+        return res.status(400).json({ message: "OTP expired" });
+      }
 
-  const record = result.rows[0];
+      if (record.otp !== otp) {
+        return res.status(400).json({ message: "Invalid OTP" });
+      }
 
-  if (new Date() > record.expires_at) {
-    return res.status(400).json({ message: "OTP expired" });
-  }
+      // Delete OTP
+      db.run("DELETE FROM otp WHERE phone = ?", [phone]);
 
-  if (record.otp !== otp) {
-    return res.status(400).json({ message: "Invalid OTP" });
-  }
-
-  // OTP verified → delete OTP
-  await pool.query("DELETE FROM otp WHERE phone = $1", [phone]);
-
-  // Create user if not exists
-  const userInsert = await pool.query(
-    `
-    INSERT INTO users (phone, subscription_active)
-    VALUES ($1, false)
-    ON CONFLICT (phone) DO NOTHING
-    RETURNING *
-    `,
-    [phone]
-  );
-
-  const user =
-    userInsert.rows[0] ||
-    (
-      await pool.query(
-        "SELECT * FROM users WHERE phone = $1",
+      // Create user if not exists
+      db.run(
+        `
+        INSERT OR IGNORE INTO users (phone, subscription_active)
+        VALUES (?, 0)
+        `,
         [phone]
-      )
-    ).rows[0];
+      );
 
-  const token = jwt.sign({ phone }, JWT_SECRET, {
-    expiresIn: JWT_EXPIRY,
-  });
+      const token = jwt.sign({ phone }, JWT_SECRET, {
+        expiresIn: JWT_EXPIRY,
+      });
 
-  res.json({
-    success: true,
-    token,
-    subscriptionActive: user.subscription_active,
-  });
+      res.json({
+        success: true,
+        token,
+        subscriptionActive: false,
+      });
+    }
+  );
 });
 
 /* ===============================
@@ -152,13 +146,13 @@ function authMiddleware(req, res, next) {
    =============================== */
 app.get("/api/v1/dashboard", authMiddleware, (req, res) => {
   res.json({
-    message: "Welcome to dashboard",
+    message: "Welcome",
     phone: req.user.phone,
   });
 });
 
 /* ===============================
-   START SERVER
+   START
    =============================== */
 app.listen(PORT, "0.0.0.0", () => {
   console.log("Server running on port", PORT);
