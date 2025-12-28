@@ -10,7 +10,6 @@ app.use(express.json());
 /* ===============================
    CONFIG
 ================================ */
-const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_later";
 const JWT_EXPIRY = "30d";
 
