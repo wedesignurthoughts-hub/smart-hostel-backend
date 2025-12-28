@@ -8,9 +8,9 @@ const app = express();
 app.use(express.json());
 
 /* ===============================
-   CONFIG (ONLY ONCE)
+   CONFIG
 ================================ */
-const PORT = process.env.PORT; // Railway PROVIDES this
+const PORT = process.env.PORT;
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRY = "30d";
 
@@ -19,7 +19,7 @@ if (!JWT_SECRET) throw new Error("JWT_SECRET missing");
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL missing");
 
 /* ===============================
-   POSTGRES CONNECTION
+   POSTGRES (LAZY SAFE)
 ================================ */
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -27,16 +27,10 @@ const pool = new Pool({
 });
 
 /* ===============================
-   HEALTH CHECK (NEVER FAILS)
+   HEALTH — NO DATABASE
 ================================ */
-app.get("/health", async (req, res) => {
-  try {
-    await pool.query("SELECT 1");
-    return res.status(200).json({ ok: true, db: true });
-  } catch (err) {
-    console.error("Health DB error:", err.message);
-    return res.status(200).json({ ok: true, db: false });
-  }
+app.get("/health", (req, res) => {
+  res.status(200).json({ ok: true });
 });
 
 /* ===============================
@@ -68,7 +62,7 @@ app.post("/api/v1/send-otp", async (req, res) => {
     console.log("OTP SENT:", phone, otp);
     res.json({ success: true });
   } catch (err) {
-    console.error("SEND OTP ERROR:", err.message);
+    console.error("SEND OTP ERROR:", err);
     res.status(500).json({ message: "OTP failed" });
   }
 });
@@ -122,13 +116,13 @@ app.post("/api/v1/verify-otp", async (req, res) => {
       subscriptionActive: false,
     });
   } catch (err) {
-    console.error("VERIFY OTP ERROR:", err.message);
+    console.error("VERIFY OTP ERROR:", err);
     res.status(500).json({ message: "Verification failed" });
   }
 });
 
 /* ===============================
-   START SERVER (ONLY ONCE)
+   START SERVER
 ================================ */
 app.listen(PORT, "0.0.0.0", () => {
   console.log("Server running on port", PORT);
