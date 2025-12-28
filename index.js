@@ -3,6 +3,8 @@ require("dotenv").config();
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const { Pool } = require("pg");
+const PORT = process.env.PORT || 4000;
+
 
 const app = express();
 app.use(express.json());
@@ -13,7 +15,6 @@ app.use(express.json());
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRY = "30d";
 
-if (!PORT) throw new Error("PORT missing");
 if (!JWT_SECRET) throw new Error("JWT_SECRET missing");
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL missing");
 
@@ -123,7 +124,6 @@ app.post("/api/v1/verify-otp", async (req, res) => {
 /* ===============================
    START SERVER
 ================================ */
-const PORT = process.env.PORT || 4000;
 app.listen(PORT, "0.0.0.0", () => {
   console.log("Server running on port", PORT);
 });
