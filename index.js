@@ -27,12 +27,6 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
-/* ===============================
-   HEALTH — NO DATABASE
-================================ */
-app.get("/health", (req, res) => {
-  res.status(200).json({ ok: true });
-});
 
 /* ===============================
    SEND OTP
