@@ -3,7 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const { Pool } = require("pg");
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 8080;
 
 
 const app = express();
