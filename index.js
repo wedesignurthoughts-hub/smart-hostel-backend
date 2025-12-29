@@ -122,4 +122,39 @@ app.post("/api/v1/create-order", async (req, res) => {
 
     const order = await razorpay.orders.create({
       amount: amount * 100, // rupees → paise
-      currency: "
+      currency: "INR",
+      receipt: "receipt_" + Date.now(),
+    });
+
+    res.json(order);
+  } catch (err) {
+    console.error("ORDER ERROR:", err);
+    res.status(500).json({ message: "Order creation failed" });
+  }
+});
+
+// ================= VERIFY PAYMENT =================
+app.post("/api/v1/verify-payment", async (req, res) => {
+  try {
+    const { phone } = req.body;
+
+    await pool.query(
+      `
+      UPDATE users
+      SET subscription_active = true
+      WHERE phone = $1
+      `,
+      [phone]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("PAYMENT VERIFY ERROR:", err.message);
+    res.status(500).json({ message: "Payment verification failed" });
+  }
+});
+
+// ================= START =================
+app.listen(PORT, "0.0.0.0", () => {
+  console.log("Server running on port", PORT);
+});
