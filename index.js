@@ -51,14 +51,15 @@ app.post("/api/v1/send-otp", async (req, res) => {
     console.log("BEFORE DB QUERY");
 
     await pool.query(
-      `
-      INSERT INTO otp (phone, otp, expires_at)
-      VALUES ($1, $2, to_timestamp($3 / 1000.0))
-      ON CONFLICT (phone)
-      DO UPDATE SET otp = $2, expires_at = to_timestamp($3 / 1000.0)
-      `,
-      [phone, otp, expiresAt]
-    );
+  `
+  INSERT INTO otp (phone, otp, expires_at)
+  VALUES ($1, $2, $3)
+  ON CONFLICT (phone)
+  DO UPDATE SET otp = $2, expires_at = $3
+  `,
+  [phone, otp, expiresAt]
+);
+
 
     console.log("AFTER DB QUERY");
 
@@ -94,8 +95,9 @@ app.post("/api/v1/verify-otp", async (req, res) => {
     if (!rows.length) {
       return res.status(400).json({ message: "OTP not found" });
     }
+    
+if (Date.now() > Number(rows[0].expires_at)) {
 
-    if (new Date() > rows[0].expires_at) {
       await pool.query("DELETE FROM otp WHERE phone=$1", [phone]);
       return res.status(400).json({ message: "OTP expired" });
     }
