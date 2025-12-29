@@ -4,6 +4,7 @@ const express = require("express");
 const jwt = require("jsonwebtoken");
 const { Pool } = require("pg");
 const Razorpay = require("razorpay");
+const crypto = require("crypto");
 
 const app = express();
 app.use(express.json());
@@ -114,15 +115,15 @@ app.post("/api/v1/verify-otp", async (req, res) => {
 // ================= CREATE ORDER =================
 app.post("/api/v1/create-order", async (req, res) => {
   try {
-    const { amount } = req.body;
+    const amount = Number(req.body.amount);
 
-    if (!amount) {
-      return res.status(400).json({ message: "Amount required" });
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: "Invalid amount" });
     }
 
     const order = await razorpay.orders.create({
-      amount: amount * 100, // rupees → paise
-      currency: "INR",
+      amount: amount * 100, // ✅ RUPEES → PAISE
+      currency: "INR",      // ✅ REQUIRED
       receipt: "receipt_" + Date.now(),
     });
 
@@ -133,23 +134,37 @@ app.post("/api/v1/create-order", async (req, res) => {
   }
 });
 
+
 // ================= VERIFY PAYMENT =================
 app.post("/api/v1/verify-payment", async (req, res) => {
   try {
-    const { phone } = req.body;
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      phone,
+    } = req.body;
+
+    const body =
+      razorpay_order_id + "|" + razorpay_payment_id;
+
+    const expectedSignature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .update(body)
+      .digest("hex");
+
+    if (expectedSignature !== razorpay_signature) {
+      return res.status(400).json({ message: "Invalid signature" });
+    }
 
     await pool.query(
-      `
-      UPDATE users
-      SET subscription_active = true
-      WHERE phone = $1
-      `,
+      "UPDATE users SET subscription_active=true WHERE phone=$1",
       [phone]
     );
 
     res.json({ success: true });
   } catch (err) {
-    console.error("PAYMENT VERIFY ERROR:", err.message);
+    console.error("VERIFY ERROR:", err);
     res.status(500).json({ message: "Payment verification failed" });
   }
 });
