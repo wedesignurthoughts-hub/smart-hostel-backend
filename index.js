@@ -33,18 +33,22 @@ const pool = new Pool({
    SEND OTP
 ================================ */
 app.post("/api/v1/send-otp", async (req, res) => {
+  console.log("SEND OTP HIT");
+
   try {
+    console.log("REQ BODY:", req.body);
+
     const phone = parseInt(
       String(req.body.phone || "").replace(/\D/g, "").slice(-10),
       10
     );
 
-    if (!phone || String(phone).length !== 10) {
-      return res.status(400).json({ message: "Invalid phone" });
-    }
+    console.log("PHONE:", phone);
 
     const otp = 123456;
-    const expiresAt = Date.now() + 5 * 60 * 1000; // epoch millis
+    const expiresAt = Date.now() + 5 * 60 * 1000;
+
+    console.log("BEFORE DB QUERY");
 
     await pool.query(
       `
@@ -56,13 +60,15 @@ app.post("/api/v1/send-otp", async (req, res) => {
       [phone, otp, expiresAt]
     );
 
-    console.log("OTP SENT:", phone, otp);
+    console.log("AFTER DB QUERY");
+
     res.json({ success: true });
   } catch (err) {
-    console.error("SEND OTP ERROR:", err.message);
+    console.error("SEND OTP ERROR FULL:", err);
     res.status(500).json({ message: "OTP failed" });
   }
 });
+
 
 
 app.get("/health", (req, res) => {
