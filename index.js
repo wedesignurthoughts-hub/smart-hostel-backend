@@ -3,8 +3,6 @@ require("dotenv").config();
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const { Pool } = require("pg");
-const PORT = process.env.PORT || 8080;
-
 
 const app = express();
 app.use(express.json());
@@ -12,68 +10,57 @@ app.use(express.json());
 /* ===============================
    CONFIG
 ================================ */
-
-
+const PORT = process.env.PORT || 8080;
 const JWT_SECRET = process.env.JWT_SECRET || "temp_dev_secret";
 const JWT_EXPIRY = "30d";
 
-const DATABASE_URL = process.env.DATABASE_URL || null;
-
-
 /* ===============================
-   POSTGRES (LAZY SAFE)
+   POSTGRES CONNECTION
 ================================ */
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
 
+/* ===============================
+   HEALTH CHECK
+================================ */
+app.get("/health", (req, res) => {
+  res.status(200).json({ ok: true });
+});
 
 /* ===============================
    SEND OTP
 ================================ */
 app.post("/api/v1/send-otp", async (req, res) => {
-  console.log("SEND OTP HIT");
-
   try {
-    console.log("REQ BODY:", req.body);
-
     const phone = String(req.body.phone || "")
-  .replace(/\D/g, "")
-  .slice(-10);
+      .replace(/\D/g, "")
+      .slice(-10);
 
+    if (phone.length !== 10) {
+      return res.status(400).json({ message: "Invalid phone number" });
+    }
 
-    console.log("PHONE:", phone);
-
-    const otp = 123456;
-    const expiresAt = Date.now() + 5 * 60 * 1000;
-
-    console.log("BEFORE DB QUERY");
+    const otp = "123456"; // DEV OTP (string)
+    const expiresAt = Date.now() + 5 * 60 * 1000; // bigint
 
     await pool.query(
-  `
-  INSERT INTO otp (phone, otp, expires_at)
-  VALUES ($1, $2, $3)
-  ON CONFLICT (phone)
-  DO UPDATE SET otp = $2, expires_at = $3
-  `,
-  [phone, otp, expiresAt]
-);
+      `
+      INSERT INTO otp (phone, otp, expires_at)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (phone)
+      DO UPDATE SET otp = $2, expires_at = $3
+      `,
+      [phone, otp, expiresAt]
+    );
 
-
-    console.log("AFTER DB QUERY");
-
+    console.log("SEND OTP:", phone, otp);
     res.json({ success: true });
   } catch (err) {
-    console.error("SEND OTP ERROR FULL:", err);
+    console.error("SEND OTP ERROR:", err.message);
     res.status(500).json({ message: "OTP failed" });
   }
-});
-
-
-
-app.get("/health", (req, res) => {
-  res.status(200).send("OK");
 });
 
 /* ===============================
@@ -82,12 +69,10 @@ app.get("/health", (req, res) => {
 app.post("/api/v1/verify-otp", async (req, res) => {
   try {
     const phone = String(req.body.phone || "")
-  .replace(/\D/g, "")
-  .slice(-10);
+      .replace(/\D/g, "")
+      .slice(-10);
 
-    );
     const otp = String(req.body.otp || "");
-
 
     const { rows } = await pool.query(
       "SELECT otp, expires_at FROM otp WHERE phone = $1",
@@ -98,9 +83,8 @@ app.post("/api/v1/verify-otp", async (req, res) => {
       return res.status(400).json({ message: "OTP not found" });
     }
 
-if (Date.now() > Number(rows[0].expires_at)) {
-
-      await pool.query("DELETE FROM otp WHERE phone=$1", [phone]);
+    if (Date.now() > Number(rows[0].expires_at)) {
+      await pool.query("DELETE FROM otp WHERE phone = $1", [phone]);
       return res.status(400).json({ message: "OTP expired" });
     }
 
@@ -108,8 +92,10 @@ if (Date.now() > Number(rows[0].expires_at)) {
       return res.status(400).json({ message: "Invalid OTP" });
     }
 
-    await pool.query("DELETE FROM otp WHERE phone=$1", [phone]);
+    // OTP valid → cleanup
+    await pool.query("DELETE FROM otp WHERE phone = $1", [phone]);
 
+    // Create user if not exists (NO FREE TRIAL)
     await pool.query(
       `
       INSERT INTO users (phone, subscription_active)
@@ -119,7 +105,9 @@ if (Date.now() > Number(rows[0].expires_at)) {
       [phone]
     );
 
-    const token = jwt.sign({ phone }, JWT_SECRET, { expiresIn: "30d" });
+    const token = jwt.sign({ phone }, JWT_SECRET, {
+      expiresIn: JWT_EXPIRY,
+    });
 
     res.json({
       success: true,
@@ -130,13 +118,7 @@ if (Date.now() > Number(rows[0].expires_at)) {
     console.error("VERIFY OTP ERROR:", err.message);
     res.status(500).json({ message: "Verification failed" });
   }
-  console.log("DB OTP:", rows[0].otp, typeof rows[0].otp);
-console.log("REQ OTP:", otp, typeof otp);
-console.log("DB EXPIRES:", rows[0].expires_at);
-console.log("NOW:", Date.now());
-
 });
-
 
 /* ===============================
    START SERVER
