@@ -34,23 +34,24 @@ const pool = new Pool({
 ================================ */
 app.post("/api/v1/send-otp", async (req, res) => {
   try {
-    const phone = String(req.body.phone || "")
-      .replace(/\D/g, "")
-      .slice(-10);
+    const phone = parseInt(
+      String(req.body.phone || "").replace(/\D/g, "").slice(-10),
+      10
+    );
 
-    if (phone.length !== 10) {
+    if (!phone || String(phone).length !== 10) {
       return res.status(400).json({ message: "Invalid phone" });
     }
 
-    const otp = "123456";
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+    const otp = 123456;
+    const expiresAt = Date.now() + 5 * 60 * 1000; // epoch millis
 
     await pool.query(
       `
       INSERT INTO otp (phone, otp, expires_at)
-      VALUES ($1, $2, $3)
+      VALUES ($1, $2, to_timestamp($3 / 1000.0))
       ON CONFLICT (phone)
-      DO UPDATE SET otp = $2, expires_at = $3
+      DO UPDATE SET otp = $2, expires_at = to_timestamp($3 / 1000.0)
       `,
       [phone, otp, expiresAt]
     );
@@ -58,14 +59,11 @@ app.post("/api/v1/send-otp", async (req, res) => {
     console.log("OTP SENT:", phone, otp);
     res.json({ success: true });
   } catch (err) {
-  console.error("SEND OTP ERROR:", err);
-  res.status(500).json({
-    message: "OTP failed",
-    error: err.message
-  });
-}
-
+    console.error("SEND OTP ERROR:", err.message);
+    res.status(500).json({ message: "OTP failed" });
+  }
 });
+
 
 app.get("/health", (req, res) => {
   res.status(200).send("OK");
@@ -76,13 +74,14 @@ app.get("/health", (req, res) => {
 ================================ */
 app.post("/api/v1/verify-otp", async (req, res) => {
   try {
-    const phone = String(req.body.phone || "")
-      .replace(/\D/g, "")
-      .slice(-10);
-    const otp = String(req.body.otp || "");
+    const phone = parseInt(
+      String(req.body.phone || "").replace(/\D/g, "").slice(-10),
+      10
+    );
+    const otp = parseInt(req.body.otp, 10);
 
     const { rows } = await pool.query(
-      "SELECT otp, expires_at FROM otp WHERE phone=$1",
+      "SELECT otp, expires_at FROM otp WHERE phone = $1",
       [phone]
     );
 
@@ -110,9 +109,7 @@ app.post("/api/v1/verify-otp", async (req, res) => {
       [phone]
     );
 
-    const token = jwt.sign({ phone }, JWT_SECRET, {
-      expiresIn: JWT_EXPIRY,
-    });
+    const token = jwt.sign({ phone }, JWT_SECRET, { expiresIn: "30d" });
 
     res.json({
       success: true,
@@ -120,10 +117,11 @@ app.post("/api/v1/verify-otp", async (req, res) => {
       subscriptionActive: false,
     });
   } catch (err) {
-    console.error("VERIFY OTP ERROR:", err);
+    console.error("VERIFY OTP ERROR:", err.message);
     res.status(500).json({ message: "Verification failed" });
   }
 });
+
 
 /* ===============================
    START SERVER
