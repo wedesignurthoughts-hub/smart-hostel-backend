@@ -3,47 +3,26 @@ require("dotenv").config();
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const { Pool } = require("pg");
-const Razorpay = require("razorpay");
 
 const app = express();
 app.use(express.json());
 
-/* ===============================
-   CONFIG
-================================ */
+// ================= CONFIG =================
 const PORT = process.env.PORT || 8080;
-const JWT_SECRET = process.env.JWT_SECRET;
-const JWT_EXPIRY = "30d";
+const JWT_SECRET = process.env.JWT_SECRET || "dev_secret";
 
-if (!JWT_SECRET) throw new Error("JWT_SECRET missing");
-if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL missing");
-
-/* ===============================
-   POSTGRES
-================================ */
+// ================= DATABASE =================
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
 
-/* ===============================
-   RAZORPAY
-================================ */
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
-
-/* ===============================
-   HEALTH
-================================ */
+// ================= HEALTH =================
 app.get("/health", (req, res) => {
   res.status(200).json({ ok: true });
 });
 
-/* ===============================
-   SEND OTP
-================================ */
+// ================= SEND OTP =================
 app.post("/api/v1/send-otp", async (req, res) => {
   try {
     const phone = String(req.body.phone || "")
@@ -54,15 +33,15 @@ app.post("/api/v1/send-otp", async (req, res) => {
       return res.status(400).json({ message: "Invalid phone" });
     }
 
-    const otp = "123456"; // DEV OTP
-    const expiresAt = Date.now() + 5 * 60 * 1000; // BIGINT (ms)
+    const otp = "123456";
+    const expiresAt = Date.now() + 5 * 60 * 1000;
 
     await pool.query(
       `
       INSERT INTO otp (phone, otp, expires_at)
       VALUES ($1, $2, $3)
       ON CONFLICT (phone)
-      DO UPDATE SET otp = $2, expires_at = $3
+      DO UPDATE SET otp=$2, expires_at=$3
       `,
       [phone, otp, expiresAt]
     );
@@ -70,24 +49,21 @@ app.post("/api/v1/send-otp", async (req, res) => {
     console.log("OTP SENT:", phone, otp);
     res.json({ success: true });
   } catch (err) {
-    console.error("SEND OTP ERROR:", err);
+    console.error("SEND OTP ERROR:", err.message);
     res.status(500).json({ message: "OTP failed" });
   }
 });
 
-/* ===============================
-   VERIFY OTP
-================================ */
+// ================= VERIFY OTP =================
 app.post("/api/v1/verify-otp", async (req, res) => {
   try {
     const phone = String(req.body.phone || "")
       .replace(/\D/g, "")
       .slice(-10);
-
     const otp = String(req.body.otp || "");
 
     const { rows } = await pool.query(
-      "SELECT otp, expires_at FROM otp WHERE phone = $1",
+      "SELECT otp, expires_at FROM otp WHERE phone=$1",
       [phone]
     );
 
@@ -96,7 +72,7 @@ app.post("/api/v1/verify-otp", async (req, res) => {
     }
 
     if (Date.now() > Number(rows[0].expires_at)) {
-      await pool.query("DELETE FROM otp WHERE phone = $1", [phone]);
+      await pool.query("DELETE FROM otp WHERE phone=$1", [phone]);
       return res.status(400).json({ message: "OTP expired" });
     }
 
@@ -104,7 +80,7 @@ app.post("/api/v1/verify-otp", async (req, res) => {
       return res.status(400).json({ message: "Invalid OTP" });
     }
 
-    await pool.query("DELETE FROM otp WHERE phone = $1", [phone]);
+    await pool.query("DELETE FROM otp WHERE phone=$1", [phone]);
 
     await pool.query(
       `
@@ -115,9 +91,7 @@ app.post("/api/v1/verify-otp", async (req, res) => {
       [phone]
     );
 
-    const token = jwt.sign({ phone }, JWT_SECRET, {
-      expiresIn: JWT_EXPIRY,
-    });
+    const token = jwt.sign({ phone }, JWT_SECRET, { expiresIn: "30d" });
 
     res.json({
       success: true,
@@ -125,40 +99,12 @@ app.post("/api/v1/verify-otp", async (req, res) => {
       subscriptionActive: false,
     });
   } catch (err) {
-    console.error("VERIFY OTP ERROR:", err);
+    console.error("VERIFY OTP ERROR:", err.message);
     res.status(500).json({ message: "Verification failed" });
   }
 });
 
-/* ===============================
-   CREATE PAYMENT ORDER
-================================ */
-app.post("/api/v1/create-order", async (req, res) => {
-  try {
-    const amount = 499 * 100; // ₹499
-
-    const order = await razorpay.orders.create({
-      amount,
-      currency: "INR",
-      receipt: `receipt_${Date.now()}`,
-    });
-
-    res.json({
-      success: true,
-      orderId: order.id,
-      amount: order.amount,
-      currency: order.currency,
-      key: process.env.RAZORPAY_KEY_ID,
-    });
-  } catch (err) {
-    console.error("ORDER ERROR:", err);
-    res.status(500).json({ message: "Payment order failed" });
-  }
-});
-
-/* ===============================
-   START SERVER
-================================ */
+// ================= START =================
 app.listen(PORT, "0.0.0.0", () => {
   console.log("Server running on port", PORT);
 });
