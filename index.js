@@ -63,79 +63,8 @@ app.post("/api/v1/send-otp", async (req, res) => {
 });
 
 // ================= VERIFY OTP =================
-app.post("/api/v1/verify-otp", async (req, res) => {
-  try {
-    const phone = String(req.body.phone || "")
-      .replace(/\D/g, "")
-      .slice(-10);
-    const otp = String(req.body.otp || "");
+const crypto = require("crypto");
 
-    const { rows } = await pool.query(
-      "SELECT otp, expires_at FROM otp WHERE phone=$1",
-      [phone]
-    );
-
-    if (!rows.length) {
-      return res.status(400).json({ message: "OTP not found" });
-    }
-
-    if (Date.now() > Number(rows[0].expires_at)) {
-      await pool.query("DELETE FROM otp WHERE phone=$1", [phone]);
-      return res.status(400).json({ message: "OTP expired" });
-    }
-
-    if (rows[0].otp !== otp) {
-      return res.status(400).json({ message: "Invalid OTP" });
-    }
-
-    await pool.query("DELETE FROM otp WHERE phone=$1", [phone]);
-
-    await pool.query(
-      `
-      INSERT INTO users (phone, subscription_active)
-      VALUES ($1, false)
-      ON CONFLICT (phone) DO NOTHING
-      `,
-      [phone]
-    );
-
-    const token = jwt.sign({ phone }, JWT_SECRET, { expiresIn: "30d" });
-
-    res.json({
-      success: true,
-      token,
-      subscriptionActive: false,
-    });
-  } catch (err) {
-    console.error("VERIFY OTP ERROR:", err.message);
-    res.status(500).json({ message: "Verification failed" });
-  }
-});
-
-// ================= CREATE ORDER =================
-app.post("/api/v1/create-order", async (req, res) => {
-  try {
-    const amount = Number(req.body.amount);
-
-    if (!amount || amount <= 0) {
-      return res.status(400).json({ message: "Invalid amount" });
-    }
-
-    const order = await razorpay.orders.create({
-      amount: amount * 100, // ✅ RUPEES → PAISE
-      currency: "INR",      // ✅ REQUIRED
-      receipt: "receipt_" + Date.now(),
-    });
-
-    res.json(order);
-  } catch (err) {
-    console.error("ORDER ERROR:", err);
-    res.status(500).json({ message: "Order creation failed" });
-  }
-});
-
-
-// ================= VERIFY PAYMENT =================
 app.post("/api/v1/verify-payment", async (req, res) => {
   try {
     const {
@@ -157,6 +86,7 @@ app.post("/api/v1/verify-payment", async (req, res) => {
       return res.status(400).json({ message: "Invalid signature" });
     }
 
+    // Activate subscription
     await pool.query(
       "UPDATE users SET subscription_active=true WHERE phone=$1",
       [phone]
@@ -164,10 +94,30 @@ app.post("/api/v1/verify-payment", async (req, res) => {
 
     res.json({ success: true });
   } catch (err) {
-    console.error("VERIFY ERROR:", err);
+    console.error("VERIFY PAYMENT ERROR:", err);
     res.status(500).json({ message: "Payment verification failed" });
   }
 });
+
+
+// ================= CREATE ORDER =================
+app.post("/api/v1/create-order", async (req, res) => {
+  try {
+    const { amount } = req.body;
+
+    const order = await razorpay.orders.create({
+      amount: amount * 100, // rupees → paise
+      currency: "INR",
+      receipt: "receipt_" + Date.now(),
+    });
+
+    res.json(order);
+  } catch (err) {
+    console.error("ORDER ERROR:", err);
+    res.status(500).json({ message: "Order failed" });
+  }
+});
+
 
 // ================= START =================
 app.listen(PORT, "0.0.0.0", () => {
