@@ -12,7 +12,9 @@ app.use(express.json());
 /* ===============================
    CONFIG
 ================================ */
-const JWT_SECRET = process.env.JWT_SECRET;
+
+
+const JWT_SECRET = process.env.JWT_SECRET || "temp_dev_secret";
 const JWT_EXPIRY = "30d";
 
 const JWT_SECRET = process.env.JWT_SECRET || "temp_dev_secret";
