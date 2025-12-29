@@ -3,6 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const { Pool } = require("pg");
+const Razorpay = require("razorpay");
 
 const app = express();
 app.use(express.json());
@@ -15,6 +16,12 @@ const JWT_SECRET = process.env.JWT_SECRET || "dev_secret";
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
+});
+
+// ================= RAZORPAY =================
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
 // ================= HEALTH =================
@@ -33,7 +40,7 @@ app.post("/api/v1/send-otp", async (req, res) => {
       return res.status(400).json({ message: "Invalid phone" });
     }
 
-    const otp = "123456";
+    const otp = "123456"; // DEV OTP
     const expiresAt = Date.now() + 5 * 60 * 1000;
 
     await pool.query(
@@ -104,7 +111,15 @@ app.post("/api/v1/verify-otp", async (req, res) => {
   }
 });
 
-// ================= START =================
-app.listen(PORT, "0.0.0.0", () => {
-  console.log("Server running on port", PORT);
-});
+// ================= CREATE ORDER =================
+app.post("/api/v1/create-order", async (req, res) => {
+  try {
+    const { amount } = req.body;
+
+    if (!amount) {
+      return res.status(400).json({ message: "Amount required" });
+    }
+
+    const order = await razorpay.orders.create({
+      amount: amount * 100, // rupees → paise
+      currency: "
