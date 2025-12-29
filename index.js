@@ -38,10 +38,10 @@ app.post("/api/v1/send-otp", async (req, res) => {
   try {
     console.log("REQ BODY:", req.body);
 
-    const phone = parseInt(
-      String(req.body.phone || "").replace(/\D/g, "").slice(-10),
-      10
-    );
+    const phone = String(req.body.phone || "")
+  .replace(/\D/g, "")
+  .slice(-10);
+
 
     console.log("PHONE:", phone);
 
@@ -81,11 +81,13 @@ app.get("/health", (req, res) => {
 ================================ */
 app.post("/api/v1/verify-otp", async (req, res) => {
   try {
-    const phone = parseInt(
-      String(req.body.phone || "").replace(/\D/g, "").slice(-10),
-      10
+    const phone = String(req.body.phone || "")
+  .replace(/\D/g, "")
+  .slice(-10);
+
     );
-    const otp = parseInt(req.body.otp, 10);
+    const otp = String(req.body.otp || "");
+
 
     const { rows } = await pool.query(
       "SELECT otp, expires_at FROM otp WHERE phone = $1",
@@ -95,7 +97,7 @@ app.post("/api/v1/verify-otp", async (req, res) => {
     if (!rows.length) {
       return res.status(400).json({ message: "OTP not found" });
     }
-    
+
 if (Date.now() > Number(rows[0].expires_at)) {
 
       await pool.query("DELETE FROM otp WHERE phone=$1", [phone]);
@@ -128,6 +130,11 @@ if (Date.now() > Number(rows[0].expires_at)) {
     console.error("VERIFY OTP ERROR:", err.message);
     res.status(500).json({ message: "Verification failed" });
   }
+  console.log("DB OTP:", rows[0].otp, typeof rows[0].otp);
+console.log("REQ OTP:", otp, typeof otp);
+console.log("DB EXPIRES:", rows[0].expires_at);
+console.log("NOW:", Date.now());
+
 });
 
 
