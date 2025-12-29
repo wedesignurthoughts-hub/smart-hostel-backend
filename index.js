@@ -15,8 +15,9 @@ app.use(express.json());
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRY = "30d";
 
-if (!JWT_SECRET) throw new Error("JWT_SECRET missing");
-if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL missing");
+const JWT_SECRET = process.env.JWT_SECRET || "temp_dev_secret";
+const DATABASE_URL = process.env.DATABASE_URL || null;
+
 
 /* ===============================
    POSTGRES (LAZY SAFE)
