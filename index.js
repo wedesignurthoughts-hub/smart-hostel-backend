@@ -62,9 +62,13 @@ app.post("/api/v1/send-otp", async (req, res) => {
     console.log("OTP SENT:", phone, otp);
     res.json({ success: true });
   } catch (err) {
-    console.error("SEND OTP ERROR:", err);
-    res.status(500).json({ message: "OTP failed" });
-  }
+  console.error("SEND OTP ERROR:", err);
+  res.status(500).json({
+    message: "OTP failed",
+    error: err.message
+  });
+}
+
 });
 
 /* ===============================
