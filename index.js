@@ -17,7 +17,6 @@ app.use(express.json());
 const JWT_SECRET = process.env.JWT_SECRET || "temp_dev_secret";
 const JWT_EXPIRY = "30d";
 
-const JWT_SECRET = process.env.JWT_SECRET || "temp_dev_secret";
 const DATABASE_URL = process.env.DATABASE_URL || null;
 
 
