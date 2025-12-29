@@ -67,6 +67,10 @@ app.post("/api/v1/send-otp", async (req, res) => {
 
 });
 
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
+});
+
 /* ===============================
    VERIFY OTP
 ================================ */
