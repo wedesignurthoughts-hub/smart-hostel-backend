@@ -171,6 +171,29 @@ app.post("/api/v1/verify-payment", async (req, res) => {
     res.status(500).json({ message: "Payment verification failed" });
   }
 });
+// ================= CHECK SUBSCRIPTION =================
+app.get("/api/v1/subscription-status/:phone", async (req, res) => {
+  try {
+    const phone = req.params.phone;
+
+    const { rows } = await pool.query(
+      "SELECT subscription_active FROM users WHERE phone = $1",
+      [phone]
+    );
+
+    if (!rows.length) {
+      return res.json({ subscriptionActive: false });
+    }
+
+    res.json({
+      subscriptionActive: rows[0].subscription_active,
+    });
+  } catch (err) {
+    console.error("SUBSCRIPTION STATUS ERROR:", err);
+    res.status(500).json({ subscriptionActive: false });
+  }
+});
+
 
 /* ================= START ================= */
 app.listen(PORT, "0.0.0.0", () => {
