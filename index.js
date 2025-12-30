@@ -6,23 +6,23 @@ const { Pool } = require("pg");
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
 
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
-
-
 const app = express();
 app.use(express.json());
 
 /* ================= CONFIG ================= */
 const PORT = process.env.PORT || 8080;
-const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
 
 /* ================= DATABASE ================= */
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
+});
+
+/* ================= RAZORPAY ================= */
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
 /* ================= HEALTH ================= */
@@ -42,7 +42,7 @@ app.post("/api/v1/send-otp", async (req, res) => {
     }
 
     const otp = "123456"; // DEV OTP
-    const expiresAt = Date.now() + 5 * 60 * 1000; // BIGINT
+    const expiresAt = Date.now() + 5 * 60 * 1000; // BIGINT (ms)
 
     await pool.query(
       `
@@ -54,10 +54,10 @@ app.post("/api/v1/send-otp", async (req, res) => {
       [phone, otp, expiresAt]
     );
 
-    console.log("OTP SENT:", phone, otp, expiresAt);
+    console.log("OTP SENT:", phone, otp);
     res.json({ success: true });
   } catch (err) {
-    console.error("SEND OTP ERROR:", err.message);
+    console.error("SEND OTP ERROR:", err);
     res.status(500).json({ message: "OTP failed" });
   }
 });
@@ -68,10 +68,11 @@ app.post("/api/v1/verify-otp", async (req, res) => {
     const phone = String(req.body.phone || "")
       .replace(/\D/g, "")
       .slice(-10);
+
     const otp = String(req.body.otp || "");
 
     const { rows } = await pool.query(
-      "SELECT otp, expires_at FROM otp WHERE phone=$1",
+      "SELECT otp, expires_at FROM otp WHERE phone = $1",
       [phone]
     );
 
@@ -82,13 +83,8 @@ app.post("/api/v1/verify-otp", async (req, res) => {
     const dbOtp = rows[0].otp;
     const dbExpires = Number(rows[0].expires_at);
 
-    console.log("DB OTP:", dbOtp);
-    console.log("REQ OTP:", otp);
-    console.log("DB EXPIRES:", dbExpires);
-    console.log("NOW:", Date.now());
-
     if (Date.now() > dbExpires) {
-      await pool.query("DELETE FROM otp WHERE phone=$1", [phone]);
+      await pool.query("DELETE FROM otp WHERE phone = $1", [phone]);
       return res.status(400).json({ message: "OTP expired" });
     }
 
@@ -96,7 +92,7 @@ app.post("/api/v1/verify-otp", async (req, res) => {
       return res.status(400).json({ message: "Invalid OTP" });
     }
 
-    await pool.query("DELETE FROM otp WHERE phone=$1", [phone]);
+    await pool.query("DELETE FROM otp WHERE phone = $1", [phone]);
 
     await pool.query(
       `
@@ -115,11 +111,12 @@ app.post("/api/v1/verify-otp", async (req, res) => {
       subscriptionActive: false,
     });
   } catch (err) {
-    console.error("VERIFY OTP ERROR:", err.message);
+    console.error("VERIFY OTP ERROR:", err);
     res.status(500).json({ message: "Verification failed" });
   }
 });
-// ================= CREATE RAZORPAY ORDER =================
+
+/* ================= CREATE ORDER ================= */
 app.post("/api/v1/create-order", async (req, res) => {
   try {
     const { amount } = req.body;
@@ -129,7 +126,7 @@ app.post("/api/v1/create-order", async (req, res) => {
     }
 
     const order = await razorpay.orders.create({
-      amount: amount * 100, // ₹ → paise
+      amount: amount * 100,
       currency: "INR",
       receipt: "receipt_" + Date.now(),
     });
@@ -140,7 +137,8 @@ app.post("/api/v1/create-order", async (req, res) => {
     res.status(500).json({ message: "Order creation failed" });
   }
 });
-// ================= VERIFY PAYMENT =================
+
+/* ================= VERIFY PAYMENT ================= */
 app.post("/api/v1/verify-payment", async (req, res) => {
   try {
     const {
@@ -150,8 +148,7 @@ app.post("/api/v1/verify-payment", async (req, res) => {
       phone,
     } = req.body;
 
-    const body =
-      razorpay_order_id + "|" + razorpay_payment_id;
+    const body = razorpay_order_id + "|" + razorpay_payment_id;
 
     const expectedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
@@ -162,9 +159,9 @@ app.post("/api/v1/verify-payment", async (req, res) => {
       return res.status(400).json({ message: "Invalid signature" });
     }
 
-    // Mark subscription active
+    // ✅ ACTIVATE SUBSCRIPTION
     await pool.query(
-      "UPDATE users SET subscription_active=true WHERE phone=$1",
+      "UPDATE users SET subscription_active = true WHERE phone = $1",
       [phone]
     );
 
