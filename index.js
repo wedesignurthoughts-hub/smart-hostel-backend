@@ -63,7 +63,6 @@ app.post("/api/v1/send-otp", async (req, res) => {
 });
 
 // ================= VERIFY OTP =================
-const crypto = require("crypto");
 
 app.post("/api/v1/verify-payment", async (req, res) => {
   try {
